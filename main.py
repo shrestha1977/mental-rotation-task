@@ -1,6 +1,8 @@
 import streamlit as st
 import random
 import time
+import pickle
+import numpy as np
 
 # ---------------------------
 # CONFIGURATION
@@ -41,6 +43,17 @@ st.set_page_config(page_title="Mental Rotation Task")
 # ---------------------------
 # HELPER FUNCTIONS
 # ---------------------------
+# ---------------------------
+# LOAD MODEL & SCALER
+# ---------------------------
+@st.cache_resource
+def load_model_and_scaler():
+    model = pickle.load(open("mrt_model.pkl", "rb"))
+    scaler = pickle.load(open("scaler_1.pkl", "rb"))
+    return model, scaler
+
+model, scaler = load_model_and_scaler()
+
 def record_answer(is_correct):
     """Record the answer and move to next question"""
     question_time = time.time() - st.session_state.question_start_time
@@ -56,37 +69,58 @@ def record_answer(is_correct):
     st.session_state.current_trial_options = None  # Reset for next trial
 
 def show_results():
-    """Display final results"""
     total_time = time.time() - st.session_state.start_time
     correct_count = sum(1 for r in st.session_state.results if r['correct'])
+    wrong_count = TOTAL_QUESTIONS - correct_count
     accuracy = (correct_count / TOTAL_QUESTIONS) * 100
     avg_time = sum(r['time'] for r in st.session_state.results) / TOTAL_QUESTIONS
 
-    
-    st.markdown("## 🎉 Task Completed!")
+    # ---------------------------
+    # ML FEATURE PREPARATION
+    # ---------------------------
+    age = st.number_input("Enter your age", min_value=18, max_value=90, value=30)
+
+    mrt_score = accuracy  # simple MRT performance proxy
+
+    input_features = np.array([[ 
+        age,
+        avg_time,
+        correct_count,
+        wrong_count,
+        mrt_score
+    ]])
+
+    input_scaled = scaler.transform(input_features)
+
+    prediction = model.predict(input_scaled)[0]
+    probability = model.predict_proba(input_scaled).max()
+
+    # ---------------------------
+    # DISPLAY RESULTS
+    # ---------------------------
+    st.markdown("## 🧠 Task Completed")
     st.markdown("---")
-    
-    # Summary metrics
+
     col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("✅ Accuracy", f"{accuracy:.1f}%", f"{correct_count}/{TOTAL_QUESTIONS}")
-    with col2:
-        st.metric("⏱️ Total Time", f"{total_time:.1f}s")
-    with col3:
-        st.metric("⚡ Avg Time per Question", f"{avg_time:.2f}s")
-    
+    col1.metric("Accuracy", f"{accuracy:.1f}%")
+    col2.metric("Avg Reaction Time", f"{avg_time:.2f}s")
+    col3.metric("ML Confidence", f"{probability*100:.1f}%")
+
     st.markdown("---")
-    
-    # Detailed results
-    st.markdown("### 📊 Question-by-Question Results")
-    for r in st.session_state.results:
-        status = "✅" if r['correct'] else "❌"
-        st.write(f"{status} Question {r['question']}: {r['time']:.2f}s")
-    
-    st.markdown("---")
-    
+
+    # Prediction interpretation
+    if prediction == 0:
+        zone = "🟢 Low Risk"
+    elif prediction == 1:
+        zone = "🟡 Moderate Risk"
+    else:
+        zone = "🔴 High Risk"
+
+    st.markdown(f"### 🔍 Model Prediction: **{zone}**")
+
+    st.caption("⚠️ This is a screening score, not a medical diagnosis.")
+
     if st.button("🔄 Start New Task", type="primary", use_container_width=True):
-        # Reset everything
         st.session_state.current_question = 0
         st.session_state.results = []
         st.session_state.start_time = time.time()
